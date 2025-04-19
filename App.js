@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, FlatList, StyleSheet, ActivityIndicator, SafeAreaView ,Text} from 'react-native';
+import { View, FlatList, StyleSheet, ActivityIndicator, SafeAreaView, Text } from 'react-native';
 import Counter from './src/components/Counter';
 import PostItem from './src/components/PostItem';
 import PostDetails from './src/components/PostDetails';
@@ -15,16 +15,20 @@ const App = () => {
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
 
-  // Initialize push notifications
+  // Memoize sendNotification to prevent unnecessary recreations
+  const memoizedSendNotification = useCallback(sendNotification, []);
+
+  // Initialize push notifications (runs once)
   useEffect(() => {
     setupPushNotifications();
   }, []);
 
-  const fetchPosts = async (pageNum = 1) => {
+  // Memoize fetchPosts function with all dependencies
+  const fetchPosts = useCallback(async (pageNum = 1) => {
     if (!hasMore && pageNum !== 1) return;
     
     setLoading(true);
-    await sendNotification('Data Fetching', `FETCHING PAGE ${pageNum} DATA`);
+    await memoizedSendNotification('Data Fetching', `FETCHING PAGE ${pageNum} DATA`);
     
     try {
       const response = await fetch(
@@ -35,28 +39,37 @@ const App = () => {
       if (data.length === 0) {
         setHasMore(false);
       } else {
-        setPosts(prev => pageNum === 1 ? data : [...prev, ...data]);
+        setPosts(prev => {
+          // Deduplicate posts
+          const newPosts = pageNum === 1 ? data : [...prev, ...data];
+          return newPosts.filter(
+            (post, index, self) => index === self.findIndex(p => p.id === post.id)
+          );
+        });
         setPage(pageNum);
       }
     } catch (error) {
       console.error('Error fetching posts:', error);
-      await sendNotification('Error', 'Failed to fetch data');
+      await memoizedSendNotification('Error', 'Failed to fetch data');
     } finally {
       setLoading(false);
-      await sendNotification('Data Fetching', `FETCHING PAGE ${pageNum} COMPLETE`);
+      await memoizedSendNotification('Data Fetching', `FETCHING PAGE ${pageNum} COMPLETE`);
     }
-  };
+  }, [hasMore, memoizedSendNotification]);
 
+  // Handle load more with all dependencies
   const handleLoadMore = useCallback(() => {
     if (!loading && hasMore) {
       fetchPosts(page + 1);
     }
-  }, [loading, hasMore, page]);
+  }, [loading, hasMore, page, fetchPosts]);
 
+  // Initial fetch with dependency
   useEffect(() => {
     fetchPosts();
-  }, []);
+  }, [fetchPosts]);
 
+  // Memoized handlers
   const handleIncrement = useCallback(() => {
     setCount(prev => prev + 1);
   }, []);
@@ -69,6 +82,7 @@ const App = () => {
     setSelectedPostId(postId);
   }, []);
 
+  // Memoized FlatList render methods
   const renderItem = useCallback(
     ({ item }) => <PostItem item={item} onPress={handlePostPress} />,
     [handlePostPress]
@@ -76,14 +90,20 @@ const App = () => {
 
   const keyExtractor = useCallback((item) => item.id.toString(), []);
 
-  const renderFooter = () => {
+  const renderFooter = useCallback(() => {
     if (!loading) return null;
     return (
       <View style={styles.loadingFooter}>
         <ActivityIndicator size="small" color={Theme.primary} />
       </View>
     );
-  };
+  }, [loading]);
+
+  const renderEmptyComponent = useCallback(() => (
+    <View style={styles.emptyContainer}>
+      <Text style={styles.emptyText}>No posts found</Text>
+    </View>
+  ), []);
 
   return (
     <LinearGradient
@@ -113,11 +133,10 @@ const App = () => {
             onEndReached={handleLoadMore}
             onEndReachedThreshold={0.5}
             ListFooterComponent={renderFooter}
-            ListEmptyComponent={
-              <View style={styles.emptyContainer}>
-                <Text style={styles.emptyText}>No posts found</Text>
-              </View>
-            }
+            ListEmptyComponent={renderEmptyComponent}
+            initialNumToRender={10}
+            maxToRenderPerBatch={5}
+            windowSize={10}
           />
         )}
       </SafeAreaView>
@@ -128,7 +147,7 @@ const App = () => {
 const styles = StyleSheet.create({
   gradient: {
     flex: 1,
-    padding:10
+    padding: 10
   },
   container: {
     flex: 1,
@@ -152,4 +171,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default App;
+export default React.memo(App);
